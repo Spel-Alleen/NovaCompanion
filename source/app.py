@@ -20,7 +20,7 @@ from core import Store,SERVERS,money
 from services import extract_document,sync_forum,local_answer,read_saved_document
 
 DATA=Path(os.environ['NOVA_DATA_DIR']) if 'NOVA_DATA_DIR' in os.environ else Path(os.getenv('LOCALAPPDATA',str(Path.home()))) / 'NovaCompanion'
-DEFAULT_KEYS={'main':'Ctrl+Shift+F6','finance':'Ctrl+Shift+F7','notes':'Ctrl+Shift+F8','laws':'Ctrl+Shift+F9','edit':'Ctrl+Shift+F10'}
+DEFAULT_KEYS={'main':'Ctrl+Shift+F6','finance':'Ctrl+Shift+F7','notes':'Ctrl+Shift+F8','laws':'Ctrl+Shift+F9','edit':'Ctrl+Shift+F10','prices':'Ctrl+Shift+F11'}
 STYLE='''
 * { font-family: "Segoe UI"; font-size: 13px; color: #e9edf5; }
 QMainWindow, QWidget#root { background: #0d111b; }
@@ -178,13 +178,13 @@ class Overlay(QWidget):
 class Main(QMainWindow):
     def __init__(self):
         super().__init__(); self.store=Store(DATA/'companion.sqlite3'); self.jobs=[]; self.candidate=None; self.repeats=0; self.pending=None; self.editing=False; self.shutting=False
-        self.server=self.store.get('server','Mirage'); self.keys=self.store.get('hotkeys',DEFAULT_KEYS); self.last_seen=self.store.get('last_seen',{}); self.chat_busy=False
+        self.server=self.store.get('server','Mirage'); self.keys={**DEFAULT_KEYS,**self.store.get('hotkeys',{})}; self.last_seen=self.store.get('last_seen',{}); self.chat_busy=False
         self.setWindowTitle('Nova Companion'); self.resize(1160,820); self.setMinimumSize(980,700)
         root=QWidget(); root.setObjectName('root'); self.setCentralWidget(root); layout=QHBoxLayout(root); layout.setContentsMargins(0,0,0,0); layout.setSpacing(0)
         sidebar=QFrame(); sidebar.setObjectName('sidebar'); sidebar.setFixedWidth(212); side=QVBoxLayout(sidebar); side.setContentsMargins(18,28,18,20); side.setSpacing(8)
         brand=label('NOVA <span style="color:#6cdbc5">/</span>','title'); side.addWidget(brand); side.addWidget(label('C O M P A N I O N','muted')); side.addSpacing(28)
         self.nav=[]; self.pages=QStackedWidget()
-        for i,title in enumerate(['◈   Обзор','↗   История денег','▤   Заметки','§   Законка и агент','⚙   Настройки']):
+        for i,title in enumerate(['◈   Обзор','↗   История денег','▤   Заметки','§   Законка и агент','◇   Цены скупщиков','⚙   Настройки']):
             b=button(title,lambda checked=False,n=i:self.go(n)); b.setObjectName('nav'); b.setCheckable(True); side.addWidget(b); self.nav.append(b)
         side.addStretch(); side.addWidget(label('ТВОЙ СЕРВЕР','eyebrow')); self.server_box=QComboBox(); self.server_box.addItems(SERVERS); self.server_box.setCurrentText(self.server); self.server_box.currentTextChanged.connect(self.change_server); side.addWidget(self.server_box)
         from updates import version
@@ -192,7 +192,7 @@ class Main(QMainWindow):
         right=QVBoxLayout(); right.setContentsMargins(30,26,30,20); right.setSpacing(18); layout.addLayout(right,1)
         header=QHBoxLayout(); self.heading=label('Обзор','title'); header.addWidget(self.heading); header.addStretch(); header.addWidget(button('Настроить оверлей',lambda:self.action('edit'))); header.addWidget(button('Скрыть окно',self.hide)); right.addLayout(header)
         self.scan_status=label('Подготовка распознавания…','muted'); self.scan_status.setWordWrap(True); right.addWidget(self.scan_status); right.addWidget(self.pages,1)
-        self.make_dashboard(); self.make_history(); self.make_notes(); self.make_laws(); self.make_settings()
+        self.make_dashboard(); self.make_history(); self.make_notes(); self.make_laws(); self.make_prices(); self.make_settings()
         self.make_overlays(); self.setup_tray()
         self.hotkeys=Hotkeys(self.action); QApplication.instance().installNativeEventFilter(self.hotkeys)
         errors=self.hotkeys.register(self.keys)
@@ -249,10 +249,16 @@ class Main(QMainWindow):
         row=QHBoxLayout(); self.library_query=QLineEdit(); self.library_query.setPlaceholderText('Поиск по тексту законов'); self.library_query.returnPressed.connect(lambda:self.search_laws(False)); row.addWidget(self.library_query,1); row.addWidget(button('Найти',lambda:self.search_laws(False))); ll.addLayout(row)
         self.law_output=QTextEdit(); self.law_output.setReadOnly(True); ll.addWidget(self.law_output,1); self.render_chat()
 
+    def make_prices(self):
+        from prices_ui import PricePanel,PriceWindow
+        l=self.page();self.price_panel=PricePanel(self.server);l.addWidget(self.price_panel,1)
+        self.price_window=PriceWindow(self.server,self)
+        l.addWidget(button('Открыть отдельную панель · '+self.keys['prices'],lambda:self.action('prices')))
+
     def make_settings(self):
         l=self.page(); scroll=QScrollArea(); scroll.setWidgetResizable(True); content=QWidget(); content.setObjectName('root'); sl=QVBoxLayout(content); sl.setSpacing(15); scroll.setWidget(content); l.addWidget(scroll)
         c,cl=card(); cl.addWidget(label('Горячие клавиши','eyebrow')); self.key_edits={}
-        for name,title in [('main','Главное окно'),('finance','Финансы: показать / скрыть'),('notes','Заметки: открыть / закрыть'),('laws','Законка: открыть / закрыть'),('edit','Настройка оверлея')]:
+        for name,title in [('main','Главное окно'),('finance','Финансы: показать / скрыть'),('notes','Заметки: открыть / закрыть'),('laws','Законка: открыть / закрыть'),('edit','Настройка оверлея'),('prices','Цены: открыть / закрыть')]:
             row=QHBoxLayout(); row.addWidget(label(title)); row.addStretch(); edit=QKeySequenceEdit(QKeySequence(self.keys[name])); edit.setMaximumSequenceLength(1); row.addWidget(edit); self.key_edits[name]=edit; cl.addLayout(row)
         cl.addWidget(button('Сохранить сочетания',self.save_hotkeys)); self.hotkey_status=label('Используй Ctrl или Alt вместе с другой клавишей.','muted'); self.hotkey_status.setWordWrap(True); cl.addWidget(self.hotkey_status); sl.addWidget(c)
         c,cl=card(); cl.addWidget(label('Оверлей','eyebrow')); row=QHBoxLayout(); row.addWidget(label('Непрозрачность панелей')); self.opacity=QSlider(Qt.Horizontal); self.opacity.setRange(35,100); self.opacity.setValue(self.store.get('opacity',92)); self.opacity.valueChanged.connect(self.set_opacity); row.addWidget(self.opacity); cl.addLayout(row)
@@ -284,17 +290,21 @@ class Main(QMainWindow):
         pix=QPixmap(64,64); pix.fill(QColor('#111725')); p=QPainter(pix); p.setPen(QColor('#6cdbc5')); p.setFont(QFont('Segoe UI',33,QFont.Bold)); p.drawText(pix.rect(),Qt.AlignCenter,'N'); p.end(); icon=QIcon(pix); self.setWindowIcon(icon)
         self.tray=QSystemTrayIcon(icon,self); self.tray.setToolTip('Nova Companion'); menu=QMenu(self); self.tray_menu=menu
         for text,name in [('Главное окно','main'),('Финансы','finance'),('Заметки','notes'),('Законка','laws'),('Настроить оверлей','edit')]: menu.addAction(text,lambda checked=False,n=name:self.action(n))
+        menu.addAction('Цены скупщиков',lambda:self.action('prices'))
         menu.addSeparator(); menu.addAction('Завершить работу',self.quit_app); self.tray.setContextMenu(menu); self.tray.activated.connect(lambda reason:self.action('main') if reason==QSystemTrayIcon.DoubleClick else None); self.tray.show()
 
     def go(self,n):
-        self.pages.setCurrentIndex(n); self.heading.setText(['Обзор','История денег','Заметки','Законка и агент','Настройки'][n])
-        self.scan_status.setVisible(n in (0,1,4))
+        self.pages.setCurrentIndex(n); self.heading.setText(['Обзор','История денег','Заметки','Законка и агент','Цены скупщиков','Настройки'][n])
+        self.scan_status.setVisible(n in (0,1,5))
         for i,b in enumerate(self.nav): b.setChecked(i==n)
 
     def action(self,name):
         if name=='main':
             if self.isVisible() and self.isActiveWindow(): self.hide()
             else: self.showNormal(); self.raise_(); self.activateWindow()
+        elif name=='prices':
+            if self.price_window.isVisible():self.price_window.hide()
+            else:self.price_window.show();self.price_window.raise_();self.price_window.activateWindow()
         elif name=='edit':
             self.editing=not self.editing
             if self.editing: self.pre_edit=[o.isVisible() for o in self.overlays]
@@ -315,6 +325,7 @@ class Main(QMainWindow):
         self.law_query.blockSignals(True); self.law_query.setText(self.store.get('chat_draft_'+name,'')); self.law_query.blockSignals(False)
         for edit in [self.notes_edit,self.quick_note]: edit.blockSignals(True); edit.setPlainText(self.store.note(name)); edit.blockSignals(False)
         for o,title in [(self.finance,'◈  ФИНАНСЫ'),(self.note_overlay,'▤  ЗАМЕТКИ'),(self.law_overlay,'§  ЗАКОНКА')]: o.caption.setText(title+' · '+name)
+        self.price_panel.set_server(name); self.price_window.panel.set_server(name)
         self.law_output.clear(); self.quick_output.clear(); self.refresh(); self.status('Сервер изменён · ожидаю баланс'); self.show_library(); self.render_chat()
 
     def save_notes(self,source):
