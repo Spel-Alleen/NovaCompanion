@@ -1,0 +1,8 @@
+__pycache__/
+*.sqlite3*
+*.dpapi
+*.log
+runtime/
+agent/
+backups/
+*.zip
