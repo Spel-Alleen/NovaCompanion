@@ -13,7 +13,8 @@ import traceback
 from PySide6.QtCore import Qt,QTimer,QThread,Signal,QAbstractNativeEventFilter,QPoint,QRectF
 from PySide6.QtGui import QColor,QPainter,QPen,QFont,QIcon,QPixmap,QKeySequence,QDesktopServices
 from PySide6.QtCore import QUrl
-from PySide6.QtWidgets import (QApplication,QMainWindow,QWidget,QFrame,QLabel,QPushButton,QVBoxLayout,QHBoxLayout,QGridLayout,QComboBox,QStackedWidget,QTextEdit,QLineEdit,QTableWidget,QTableWidgetItem,QHeaderView,QFileDialog,QMessageBox,QCheckBox,QSlider,QSizeGrip,QSystemTrayIcon,QMenu,QKeySequenceEdit,QScrollArea,QInputDialog,QSizePolicy)
+from PySide6.QtWidgets import (QApplication,QMainWindow,QWidget,QFrame,QLabel,QPushButton,QVBoxLayout,QHBoxLayout,QGridLayout,QComboBox,QStackedWidget,QTextEdit,QLineEdit,QTableWidget,QTableWidgetItem,QHeaderView,QFileDialog,QMessageBox,QCheckBox,QSlider,QSizeGrip,QSystemTrayIcon,QMenu,QKeySequenceEdit,QScrollArea,QInputDialog,QSizePolicy,QTabWidget)
+from chat_ui import ChatView,ChatInput
 
 from core import Store,SERVERS,money
 from services import extract_document,sync_forum,local_answer,read_saved_document
@@ -177,7 +178,7 @@ class Overlay(QWidget):
 class Main(QMainWindow):
     def __init__(self):
         super().__init__(); self.store=Store(DATA/'companion.sqlite3'); self.jobs=[]; self.candidate=None; self.repeats=0; self.pending=None; self.editing=False; self.shutting=False
-        self.server=self.store.get('server','Mirage'); self.keys=self.store.get('hotkeys',DEFAULT_KEYS); self.last_seen=self.store.get('last_seen',{})
+        self.server=self.store.get('server','Mirage'); self.keys=self.store.get('hotkeys',DEFAULT_KEYS); self.last_seen=self.store.get('last_seen',{}); self.chat_busy=False
         self.setWindowTitle('Nova Companion'); self.resize(1160,820); self.setMinimumSize(980,700)
         root=QWidget(); root.setObjectName('root'); self.setCentralWidget(root); layout=QHBoxLayout(root); layout.setContentsMargins(0,0,0,0); layout.setSpacing(0)
         sidebar=QFrame(); sidebar.setObjectName('sidebar'); sidebar.setFixedWidth(212); side=QVBoxLayout(sidebar); side.setContentsMargins(18,28,18,20); side.setSpacing(8)
@@ -227,11 +228,18 @@ class Main(QMainWindow):
         l=self.page(); l.addWidget(label('Заметки сохраняются автоматически и отдельно для каждого сервера.','muted')); self.notes_edit=QTextEdit(); self.notes_edit.setPlaceholderText('Планы на игру, важные контакты, напоминания…'); self.notes_edit.setPlainText(self.store.note(self.server)); self.notes_edit.textChanged.connect(lambda:self.save_notes(self.notes_edit)); l.addWidget(self.notes_edit,1)
 
     def make_laws(self):
-        l=self.page(); self.law_status=label('Загрузи законку выбранного сервера. Ответы опираются на сохранённые документы.','muted'); self.law_status.setWordWrap(True); l.addWidget(self.law_status)
-        row=QHBoxLayout(); self.sync_button=button('Обновить с форума',self.sync); row.addWidget(self.sync_button); row.addWidget(button('Импорт HTML / TXT',self.import_law)); row.addWidget(button('Импорт папки',self.import_folder)); row.addWidget(button('Открыть источники',self.open_sources)); l.addLayout(row)
-        row=QHBoxLayout(); self.document_box=QComboBox(); row.addWidget(self.document_box,1); row.addWidget(button('Читать документ',self.read_document)); l.addLayout(row)
-        row=QHBoxLayout(); self.law_query=QLineEdit(); self.law_query.setPlaceholderText('Ключевые слова или вопрос по законке…'); self.law_query.returnPressed.connect(lambda:self.search_laws(False)); row.addWidget(self.law_query,1); row.addWidget(button('Найти',lambda:self.search_laws(False))); self.ask_button=button('Спросить агента',lambda:self.search_laws(True),True); row.addWidget(self.ask_button); l.addLayout(row)
-        self.law_output=QTextEdit(); self.law_output.setReadOnly(True); self.law_output.setPlaceholderText('Здесь появятся документы, результаты поиска и ответы с источниками.'); l.addWidget(self.law_output,1)
+        l=self.page(); self.law_tabs=QTabWidget(); self.law_tabs.setStyleSheet('QTabWidget::pane { border:0; } QTabBar::tab { background:#182132;color:#94a6bf;padding:11px 24px;border-radius:7px;margin:0 8px 12px 0; } QTabBar::tab:selected { background:#24423f;color:#93edda; }'); l.addWidget(self.law_tabs,1)
+        chat=QWidget(); cl=QVBoxLayout(chat); cl.setContentsMargins(0,0,0,0); cl.setSpacing(12); self.law_tabs.addTab(chat,'Диалог')
+        row=QHBoxLayout(); row.addWidget(label('Задавай вопросы и уточняй по ходу разговора.','muted')); row.addStretch(); self.new_chat_button=button('Новый диалог',self.new_chat); row.addWidget(self.new_chat_button); cl.addLayout(row)
+        self.chat_view=ChatView(); cl.addWidget(self.chat_view,1)
+        row=QHBoxLayout(); self.law_query=ChatInput(); self.law_query.setPlaceholderText('Спроси или продолжи разговор…'); self.law_query.setText(self.store.get('chat_draft_'+self.server,'')); self.law_query.textChanged.connect(lambda:self.store.set('chat_draft_'+self.server,self.law_query.text())); self.law_query.returnPressed.connect(lambda:self.search_laws(True)); row.addWidget(self.law_query,1); self.ask_button=button('Отправить',lambda:self.search_laws(True),True); row.addWidget(self.ask_button); cl.addLayout(row)
+        hint=label('Enter — отправить · Shift+Enter — новая строка','muted'); cl.addWidget(hint)
+        library=QWidget(); ll=QVBoxLayout(library); ll.setContentsMargins(0,0,0,0); ll.setSpacing(12); self.law_tabs.addTab(library,'Библиотека')
+        self.law_status=label('Загрузи документы выбранного сервера.','muted'); self.law_status.setWordWrap(True); ll.addWidget(self.law_status)
+        row=QHBoxLayout(); self.sync_button=button('Обновить с форума',self.sync); row.addWidget(self.sync_button); row.addWidget(button('Импорт HTML / TXT',self.import_law)); row.addWidget(button('Импорт папки',self.import_folder)); row.addWidget(button('Открыть источники',self.open_sources)); ll.addLayout(row)
+        row=QHBoxLayout(); self.document_box=QComboBox(); row.addWidget(self.document_box,1); row.addWidget(button('Читать документ',self.read_document)); ll.addLayout(row)
+        row=QHBoxLayout(); self.library_query=QLineEdit(); self.library_query.setPlaceholderText('Поиск по тексту законов'); self.library_query.returnPressed.connect(lambda:self.search_laws(False)); row.addWidget(self.library_query,1); row.addWidget(button('Найти',lambda:self.search_laws(False))); ll.addLayout(row)
+        self.law_output=QTextEdit(); self.law_output.setReadOnly(True); ll.addWidget(self.law_output,1); self.render_chat()
 
     def make_settings(self):
         l=self.page(); scroll=QScrollArea(); scroll.setWidgetResizable(True); content=QWidget(); content.setObjectName('root'); sl=QVBoxLayout(content); sl.setSpacing(15); scroll.setWidget(content); l.addWidget(scroll)
@@ -259,7 +267,7 @@ class Main(QMainWindow):
     def make_overlays(self):
         self.finance=Overlay(self,'finance','◈  ФИНАНСЫ · '+self.server,(340,260)); self.finance_value=label('—','value'); self.finance.body.addWidget(self.finance_value); self.finance_detail=label('Наличные —    Банк —','muted'); self.finance_detail.setWordWrap(True); self.finance.body.addWidget(self.finance_detail); self.finance_today=label('Сегодня  0 $'); self.finance.body.addWidget(self.finance_today); self.finance_periods=label('Неделя  0 $  ·  Месяц  0 $','muted'); self.finance_periods.setWordWrap(True); self.finance.body.addWidget(self.finance_periods); self.finance_state=label('Ожидание баланса','muted'); self.finance_state.setWordWrap(True); self.finance.body.addWidget(self.finance_state)
         self.note_overlay=Overlay(self,'notes','▤  ЗАМЕТКИ · '+self.server,(380,330)); self.quick_note=QTextEdit(); self.quick_note.setPlaceholderText('Быстрая запись…'); self.quick_note.setPlainText(self.store.note(self.server)); self.quick_note.textChanged.connect(lambda:self.save_notes(self.quick_note)); self.note_overlay.body.addWidget(self.quick_note,1)
-        self.law_overlay=Overlay(self,'laws','§  ЗАКОНКА · '+self.server,(570,440)); row=QHBoxLayout(); self.quick_query=QLineEdit(); self.quick_query.setPlaceholderText('Поиск или вопрос…'); self.quick_query.returnPressed.connect(lambda:self.quick_search(False)); row.addWidget(self.quick_query,1); row.addWidget(button('Найти',lambda:self.quick_search(False))); row.addWidget(button('Агент',lambda:self.quick_search(True))); self.law_overlay.body.addLayout(row); self.quick_output=QTextEdit(); self.quick_output.setReadOnly(True); self.law_overlay.body.addWidget(self.quick_output,1)
+        self.law_overlay=Overlay(self,'laws','§  ДИАЛОГ · '+self.server,(600,500)); self.quick_output=ChatView(); self.law_overlay.body.addWidget(self.quick_output,1); row=QHBoxLayout(); self.quick_query=QLineEdit(); self.quick_query.setPlaceholderText('Уточни или задай вопрос…'); self.quick_query.returnPressed.connect(lambda:self.quick_search(True)); row.addWidget(self.quick_query,1); self.quick_send=button('Отправить',lambda:self.quick_search(True)); row.addWidget(self.quick_send); self.law_overlay.body.addLayout(row); self.render_chat()
         self.overlays=[self.finance,self.note_overlay,self.law_overlay]
         for o in self.overlays: o.set_edit(False)
         self.set_scale(self.store.get('scale',100))
@@ -272,6 +280,7 @@ class Main(QMainWindow):
 
     def go(self,n):
         self.pages.setCurrentIndex(n); self.heading.setText(['Обзор','История денег','Заметки','Законка и агент','Настройки'][n])
+        self.scan_status.setVisible(n in (0,1,4))
         for i,b in enumerate(self.nav): b.setChecked(i==n)
 
     def action(self,name):
@@ -295,9 +304,10 @@ class Main(QMainWindow):
 
     def change_server(self,name):
         self.server=name; self.store.set('server',name); self.candidate=None; self.repeats=0; self.pending=None; self.pending_card.hide()
+        self.law_query.blockSignals(True); self.law_query.setText(self.store.get('chat_draft_'+name,'')); self.law_query.blockSignals(False)
         for edit in [self.notes_edit,self.quick_note]: edit.blockSignals(True); edit.setPlainText(self.store.note(name)); edit.blockSignals(False)
         for o,title in [(self.finance,'◈  ФИНАНСЫ'),(self.note_overlay,'▤  ЗАМЕТКИ'),(self.law_overlay,'§  ЗАКОНКА')]: o.caption.setText(title+' · '+name)
-        self.law_output.clear(); self.quick_output.clear(); self.refresh(); self.status('Сервер изменён · ожидаю баланс'); self.show_library()
+        self.law_output.clear(); self.quick_output.clear(); self.refresh(); self.status('Сервер изменён · ожидаю баланс'); self.show_library(); self.render_chat()
 
     def save_notes(self,source):
         text=source.toPlainText(); self.store.save_note(self.server,text)
@@ -410,7 +420,8 @@ class Main(QMainWindow):
         for url in SERVERS[self.server]: QDesktopServices.openUrl(QUrl(url))
 
     def search_laws(self,agent=False,query=None,output=None):
-        query=self.law_query.text() if query is None else query; output=output or self.law_output
+        if agent: self.submit_chat(self.law_query.text() if query is None else query); return
+        query=self.library_query.text() if query is None else query; output=output or self.law_output
         hits=self.store.search(self.server,query,research=agent)
         if not agent:
             if not hits: output.setPlainText('В загруженной законке выбранного сервера совпадений нет. Проверь библиотеку или измени запрос.'); return
@@ -418,18 +429,56 @@ class Main(QMainWindow):
             for i,(_,r,chunk) in enumerate(hits):
                 result+=f'<h4>[{i+1}] '+html.escape(r['title'])+' · п. '+html.escape(r.get('reference',''))+'</h4><p>'+html.escape(r.get('section',''))+'</p><p>'+html.escape(chunk).replace('\n','<br>')+'</p><p style="color:#8e9cb4">'+html.escape(r['url'])+'<br>Копия: '+html.escape(r['stamp'])+'</p><hr>'
             output.setHtml(result); return
-        if not query.strip(): return
-        output.setPlainText('Подбираю статьи и готовлю ответ…\nЛокальная модель может отвечать несколько минут. Окно остаётся доступным.'); self.ask_button.setEnabled(False); model=self.store.get('model',''); server=self.server
-        def done(s):
-            self.ask_button.setEnabled(True)
-            if self.server==server: output.setPlainText(s)
-        def fail(s): self.ask_button.setEnabled(True); output.setPlainText('Локальный агент недоступен: '+s+'\n\nИспользуй поиск или подключи установленную модель Ollama в настройках.')
-        from legal import reviewed_answer,procedure_answer
-        reviewed=reviewed_answer(self.store,self.server,query)
-        if reviewed is None: reviewed=procedure_answer(self.store.laws(self.server),self.server,query)
-        self.run_job(lambda progress:local_answer(query,hits,model,reviewed),done,fail)
 
-    def quick_search(self,agent): self.search_laws(agent,self.quick_query.text(),self.quick_output)
+    def chat_history(self,server=None): return self.store.get('chat_history_'+(server or self.server),[])
+
+    def render_chat(self):
+        messages=self.chat_history(); pending=self.chat_busy and getattr(self,'chat_pending_server',None)==self.server
+        self.chat_view.set_messages(messages,pending)
+        if hasattr(self,'quick_output'): self.quick_output.set_messages(messages,pending)
+
+    def new_chat(self):
+        if self.chat_busy: return
+        import uuid
+        previous=self.chat_history()
+        if previous: self.store.set('chat_archive_'+self.server+'_'+uuid.uuid4().hex,previous)
+        self.store.set('chat_history_'+self.server,[]); self.law_query.clear(); self.render_chat(); self.law_query.setFocus()
+
+    def set_chat_busy(self,value):
+        self.chat_busy=value; self.ask_button.setEnabled(not value); self.new_chat_button.setEnabled(not value)
+        if hasattr(self,'quick_send'): self.quick_send.setEnabled(not value)
+
+    def submit_chat(self,question):
+        question=question.strip()
+        if not question or self.chat_busy: return
+        from conversation import answer_turn,effective_query,clean_text
+        from legal import evidence_pack
+        from services import context_budget
+        server=self.server; history=self.chat_history(server); before=list(history)
+        history.append({'role':'user','content':question}); self.store.set('chat_history_'+server,history[-40:])
+        self.law_query.clear()
+        if hasattr(self,'quick_query'): self.quick_query.clear()
+        self.chat_pending_server=server; self.set_chat_busy(True); self.render_chat()
+        response={'answer':'Опиши, пожалуйста, ситуацию несколькими сообщениями: сначала место, участников и само требование, затем остальные обстоятельства. Так я смогу уточнить важные детали и ответить по статьям.','details':'','sources':[]} if len(question)>5000 else answer_turn(self.store,server,question,before)
+        expanded=effective_query(question,before); hits=[] if response else self.store.search(server,expanded,True); model=self.store.get('model','')
+        def generate(progress):
+            if response: return response
+            raw=local_answer(question,hits,model,history=before,context_query=expanded)
+            parts=raw.split('\n\nИсточники и подробности\n\n',1)
+            selected=evidence_pack(hits,expanded,budget=context_budget(model,question))
+            sources=[{'number':i+1,'title':meta['title'],'reference':'п. '+meta.get('reference',''),'url':meta['url']} for i,(meta,body) in enumerate(selected)]
+            return {'answer':clean_text(parts[0]),'details':parts[1] if len(parts)>1 else '', 'sources':sources}
+        def done(result):
+            import re
+            cited={int(v) for v in re.findall(r'\[(\d+)\]',result['answer'])}
+            sources=[s for s in result.get('sources',[]) if s.get('number') in cited]
+            messages=self.chat_history(server); messages.append({'role':'assistant','content':clean_text(result['answer']),'details':clean_text(result.get('details','')),'sources':sources})
+            self.store.set('chat_history_'+server,messages[-40:]); self.set_chat_busy(False); self.render_chat()
+        def fail(message):
+            messages=self.chat_history(server); messages.append({'role':'assistant','content':'Сейчас не удалось подготовить ответ. Попробуй ещё раз или открой статьи в библиотеке.','details':message}); self.store.set('chat_history_'+server,messages[-40:]); self.set_chat_busy(False); self.render_chat()
+        self.run_job(generate,done,fail)
+
+    def quick_search(self,agent=True): self.submit_chat(self.quick_query.text())
 
     def find_models(self):
         import requests
