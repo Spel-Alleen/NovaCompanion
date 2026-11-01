@@ -3,7 +3,7 @@ import datetime as dt
 import json
 from pathlib import Path
 from PySide6.QtCore import Qt,QUrl
-from PySide6.QtGui import QColor,QDesktopServices
+from PySide6.QtGui import QColor,QDesktopServices,QCursor,QGuiApplication
 from PySide6.QtWidgets import (QWidget,QVBoxLayout,QHBoxLayout,QLabel,QLineEdit,
     QComboBox,QTableWidget,QTableWidgetItem,QHeaderView,QPushButton,QFrame)
 
@@ -78,6 +78,18 @@ class PricePanel(QWidget):
 
 class PriceWindow(QWidget):
     def __init__(self,server,parent=None):
-        super().__init__(parent,Qt.Tool|Qt.WindowStaysOnTopHint);self.setWindowTitle('Nova Companion · Цены скупщиков');self.setObjectName('root');self.resize(850,680);self.setMinimumSize(650,480)
+        # Native owned/tool windows follow the owner's minimize/hide state.
+        # Keep a separate top-level window; Main retains its Python reference.
+        super().__init__(None,Qt.Window|Qt.WindowStaysOnTopHint);self.setWindowTitle('Nova Companion · Цены скупщиков');self.setObjectName('root');self.resize(850,680);self.setMinimumSize(650,480);self.placed=False
         layout=QVBoxLayout(self);layout.setContentsMargins(20,20,20,20);self.panel=PricePanel(server);layout.addWidget(self.panel)
+    def present(self):
+        if not self.placed or not any(s.availableGeometry().intersects(self.frameGeometry()) for s in QGuiApplication.screens()):
+            screen=QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()
+            if screen:
+                bounds=screen.availableGeometry();self.resize(min(850,bounds.width()-30),min(680,bounds.height()-50));self.move(bounds.center()-self.rect().center())
+            self.placed=True
+        self.showNormal();self.raise_();self.activateWindow()
+    def toggle(self):
+        if self.isVisible() and not self.isMinimized():self.hide()
+        else:self.present()
     def closeEvent(self,event):self.hide();event.ignore()

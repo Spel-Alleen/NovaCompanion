@@ -253,7 +253,7 @@ class Main(QMainWindow):
         from prices_ui import PricePanel,PriceWindow
         l=self.page();self.price_panel=PricePanel(self.server);l.addWidget(self.price_panel,1)
         self.price_window=PriceWindow(self.server,self)
-        l.addWidget(button('Открыть отдельную панель · '+self.keys['prices'],lambda:self.action('prices')))
+        l.addWidget(button('Открыть отдельную панель · '+self.keys['prices'],self.price_window.present))
 
     def make_settings(self):
         l=self.page(); scroll=QScrollArea(); scroll.setWidgetResizable(True); content=QWidget(); content.setObjectName('root'); sl=QVBoxLayout(content); sl.setSpacing(15); scroll.setWidget(content); l.addWidget(scroll)
@@ -303,8 +303,7 @@ class Main(QMainWindow):
             if self.isVisible() and self.isActiveWindow(): self.hide()
             else: self.showNormal(); self.raise_(); self.activateWindow()
         elif name=='prices':
-            if self.price_window.isVisible():self.price_window.hide()
-            else:self.price_window.show();self.price_window.raise_();self.price_window.activateWindow()
+            self.price_window.toggle()
         elif name=='edit':
             self.editing=not self.editing
             if self.editing: self.pre_edit=[o.isVisible() for o in self.overlays]
