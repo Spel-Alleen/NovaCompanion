@@ -46,18 +46,8 @@ def read_image(image):
     return pair,lines
 
 def game_rect():
-    user=ctypes.windll.user32
-    hwnd=user.GetForegroundWindow()
-    name=ctypes.create_unicode_buffer(512); user.GetWindowTextW(hwnd,name,512)
-    if not re.search(r'rage|rаg|multipl|gta|grand theft|nova',name.value,re.I): return None
-    # Exclude our own companion windows; only capture a game client.
-    if 'companion' in name.value.lower(): return None
-    from ctypes import wintypes
-    rect=wintypes.RECT()
-    user.GetClientRect(hwnd,ctypes.byref(rect))
-    point=wintypes.POINT(0,0); user.ClientToScreen(hwnd,ctypes.byref(point))
-    if rect.right<640 or rect.bottom<480: return None
-    return {'left':point.x,'top':point.y,'width':rect.right,'height':rect.bottom}
+    from game_window import game_rect as detect
+    return detect()
 
 def capture_game():
     import mss

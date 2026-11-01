@@ -203,6 +203,14 @@ class Main(QMainWindow):
         self.update_result=None; self.update_stage=None
         self.update_timer=QTimer(self); self.update_timer.timeout.connect(lambda:self.check_updates(False)); self.update_timer.start(4*60*60*1000)
         if self.store.get('auto_updates',True) and not os.environ.get('NOVA_DATA_DIR'): QTimer.singleShot(4000,lambda:self.check_updates(False))
+        self.backup_timer=QTimer(self); self.backup_timer.timeout.connect(self.backup_data); self.backup_timer.start(15*60*1000)
+        QTimer.singleShot(500,self.backup_data)
+
+    def backup_data(self):
+        if self.shutting: return
+        try: self.store.snapshot()
+        except Exception as exc:
+            (DATA/'backup-error.log').write_text(str(exc),encoding='utf-8')
 
     def page(self):
         p=QWidget(); l=QVBoxLayout(p); l.setContentsMargins(0,0,0,0); l.setSpacing(16); self.pages.addWidget(p); return l
@@ -595,6 +603,8 @@ class Main(QMainWindow):
         from agent import stop
         stop()
         for o in self.overlays: o.save(); o.hide()
+        try: self.store.snapshot()
+        except Exception: pass
         self.tray.hide(); QApplication.instance().quit()
 
 def main():
@@ -607,7 +617,9 @@ def main():
     app=QApplication(sys.argv); app.setApplicationName('Nova Companion'); app.setQuitOnLastWindowClosed(False); app.setStyle('Fusion'); app.setStyleSheet(STYLE)
     from services import install_bundled_library
     seed_store=Store(DATA/'companion.sqlite3'); install_bundled_library(seed_store); seed_store.db.close()
-    window=Main(); window.show(); window.show_library()
+    window=Main()
+    if '--background' not in sys.argv: window.show()
+    window.show_library()
     if '--ask' in sys.argv:
         window.server_box.setCurrentText('Mirage'); window.go(3)
         window.law_query.setText(sys.argv[sys.argv.index('--ask')+1])
@@ -625,5 +637,7 @@ if __name__=='__main__':
             i=sys.argv.index('--diagnose'); pair,lines=read_image(Image.open(sys.argv[i+1]).convert('RGB'))
             Path(sys.argv[i+2]).write_text(json.dumps({'balance':pair,'ocr_lines':lines,'local_model':available()},ensure_ascii=False,indent=2),encoding='utf-8')
         else: main()
-    except Exception:
-        DATA.mkdir(parents=True,exist_ok=True); (DATA/'error.log').write_text(traceback.format_exc(),encoding='utf-8'); raise
+    except Exception as exc:
+        DATA.mkdir(parents=True,exist_ok=True); (DATA/'error.log').write_text(traceback.format_exc(),encoding='utf-8')
+        ctypes.windll.user32.MessageBoxW(None,'Не удалось запустить Nova Companion.\n\n'+str(exc)+'\n\nПодробности: '+str(DATA/'error.log'),'Nova Companion',0x10)
+        raise

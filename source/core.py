@@ -2,6 +2,7 @@ import datetime as dt
 import json
 import re
 import sqlite3
+import os
 from pathlib import Path
 
 SERVERS = {'Mirage': ['https://forum.grand-rp.su/forums/960/', 'https://forum.grand-rp.su/forums/1093/'], 'New Era': ['https://forum.grand-rp.su/forums/1320/'], 'Horizon': ['https://forum.grand-rp.su/forums/1478/']}
@@ -18,13 +19,34 @@ class Store:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(str(path))
         self.db.row_factory = sqlite3.Row
-        self.db.executescript('''PRAGMA journal_mode=WAL;
+        try: self.db.executescript('''PRAGMA journal_mode=WAL;
         CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT);
         CREATE TABLE IF NOT EXISTS readings(id INTEGER PRIMARY KEY,server TEXT,stamp TEXT,cash INTEGER,bank INTEGER,delta INTEGER,kind TEXT);
         CREATE TABLE IF NOT EXISTS notes(server TEXT PRIMARY KEY,body TEXT);
         CREATE TABLE IF NOT EXISTS laws(id INTEGER PRIMARY KEY,server TEXT,title TEXT,url TEXT,body TEXT,stamp TEXT,UNIQUE(server,url));
         CREATE TABLE IF NOT EXISTS reviewed_answers(server TEXT,topic TEXT,answer TEXT,fingerprints TEXT,stamp TEXT,PRIMARY KEY(server,topic));''')
+        except sqlite3.DatabaseError as exc:
+            self.db.close()
+            if getattr(exc,'sqlite_errorcode',None) in (sqlite3.SQLITE_CORRUPT,sqlite3.SQLITE_NOTADB):
+                raise sqlite3.DatabaseError('Не удалось открыть базу данных: файл повреждён. Он не был сброшен. Резервные копии находятся в '+str(self.path.parent/'backups')) from exc
+            raise
         self.db.commit()
+
+    def snapshot(self,folder=None):
+        """Produce a validated standalone SQLite backup, never copy live WAL files."""
+        folder=Path(folder) if folder else self.path.parent/'backups'; folder.mkdir(parents=True,exist_ok=True)
+        name='autosave-'+dt.datetime.now().strftime('%Y%m%d-%H')+'.sqlite3'
+        temporary=folder/(name+'.new'); destination=folder/name
+        target=sqlite3.connect(str(temporary))
+        try:
+            self.db.backup(target); target.execute('PRAGMA journal_mode=DELETE')
+            if target.execute('PRAGMA quick_check').fetchall()!=[('ok',)]: raise sqlite3.DatabaseError('Резервная копия не прошла проверку целостности.')
+        finally: target.close()
+        os.replace(temporary,destination)
+        old=sorted(folder.glob('autosave-*.sqlite3'),key=lambda p:p.name,reverse=True)[96:]
+        for path in old:
+            if path.parent.resolve()==folder.resolve() and path.is_file(): path.unlink()
+        return destination
 
     def get(self, key, default=None):
         row = self.db.execute('SELECT value FROM settings WHERE key=?', (key,)).fetchone()
